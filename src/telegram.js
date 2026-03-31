@@ -1,11 +1,12 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { getCachedEvents, fetchEventsForDate } from './scraper.js';
-import { formatMorningSummary } from './formatter.js';
-import { formatHistory } from './stats.js';
+import { formatMorningSummary, formatTradeStats, formatPatternStats } from './formatter.js';
+import { formatHistory, getTradeStats, getPatternStats } from './stats.js';
 import { formatCOTMessage } from './cot.js';
 import { formatSentimentMessage } from './sentiment.js';
 import { formatOptionsMessage } from './options.js';
-import { setState, getState } from './db.js';
+import { setState, getState, normalizeEventKey } from './db.js';
+import { config } from './config.js';
 
 let bot = null;
 let chatId = null;
@@ -31,7 +32,7 @@ export function initBot(token, targetChatId) {
 
   bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id,
-      '✅ <b>GoldyXrogers Bot actif</b>\n\nSession NY | Guadeloupe (UTC-4)\nUS30 · USDJPY · XBRUSD · XAUUSD\n\nCommandes:\n/today — Résumé session NY\n/tomorrow — Événements demain\n/week — Planning de la semaine\n/history [indicateur] — Ex: /history NFP\n/mute [min] — Suspendre alertes (ex: /mute 30)\n/unmute — Réactiver alertes\n/impact [level] — Filtrer impact (high/medium/low/all)\n/cot — Rapport COT institutionnels\n/sentiment — Sentiment retail Myfxbook\n/options — Expirations options CME\n/status — État du bot',
+      '✅ <b>GoldyXrogers Bot actif</b>\n\nSession NY | Guadeloupe (UTC-4)\nUS30 · USDJPY · XBRUSD · XAUUSD\n\nCommandes:\n/today — Résumé session NY\n/tomorrow — Événements demain\n/week — Planning de la semaine\n/history [indicateur] — Ex: /history NFP\n/best [indicateur] — Amplitudes moyennes post-annonce\n/patterns [instrument] — Ex: /patterns XAUUSD\n/mute [min] — Suspendre alertes (ex: /mute 30)\n/unmute — Réactiver alertes\n/impact [level] — Filtrer impact (high/medium/low/all)\n/cot — Rapport COT institutionnels\n/sentiment — Sentiment retail Myfxbook\n/options — Expirations options CME\n/status — État du bot',
       { parse_mode: 'HTML' }
     );
   });
@@ -70,6 +71,26 @@ export function initBot(token, targetChatId) {
   bot.onText(/\/history(?:\s+(.+))?/, (msg, match) => {
     const query = match[1] || 'NFP';
     const text = formatHistory(query.trim());
+    bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
+  });
+
+  bot.onText(/\/best(?:\s+(.+))?/, (msg, match) => {
+    const query = match[1]?.trim() || null;
+    const eventKey = query ? normalizeEventKey(query, 'USD') : null;
+    const data = getTradeStats(eventKey);
+    const text = formatTradeStats(data, eventKey);
+    bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
+  });
+
+  bot.onText(/\/patterns(?:\s+(\w+))?/, (msg, match) => {
+    const instrument = match[1]?.trim().toUpperCase() || null;
+    if (instrument && !config.market.instruments.includes(instrument)) {
+      bot.sendMessage(msg.chat.id,
+        `❌ Instrument invalide. Options: ${config.market.instruments.join(', ')}`);
+      return;
+    }
+    const data = getPatternStats(instrument);
+    const text = formatPatternStats(data, instrument);
     bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
   });
 
@@ -127,7 +148,7 @@ export function initBot(token, targetChatId) {
       : '🔔 Alertes actives';
     const impactFilter = getState('impact_filter', 'all');
     bot.sendMessage(msg.chat.id,
-      `🟢 <b>Bot actif</b>\n${muteStr}\n⚙️ Filtre impact: ${impactFilter}\n📊 ${events.length} événements en mémoire\n🕐 ${new Date().toISOString()}`,
+      `🟢 <b>Bot actif</b>\n${muteStr}\n⚙️ Filtre impact: ${impactFilter}\n📊 ${events.length} événements en mémoire\n📈 /best — amplitudes | 🔍 /patterns — patterns historiques\n🕐 ${new Date().toISOString()}`,
       { parse_mode: 'HTML' }
     );
   });

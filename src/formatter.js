@@ -1,6 +1,7 @@
 import { DateTime } from 'luxon';
+import { config } from './config.js';
 
-const GUADELOUPE_TZ = 'America/Guadeloupe'; // UTC-4, pas de DST
+const GUADELOUPE_TZ = config.timing.guadeloupeTz;
 
 export function toGuadeloupeTime(date) {
   return DateTime.fromJSDate(date, { zone: 'UTC' })
@@ -125,6 +126,98 @@ export function formatMarketAnalysis(analyses) {
 
 export function formatTrailingSLReminder(event) {
   return `⏰ <b>TRAILING SL — 10 min après l'annonce</b>\n${event.impactIcon} ${event.currency} — ${event.name}\n\nVérifie ta position et ajuste ton Stop Loss si tu es en profit.\n💹 ${event.instruments.join(' | ')}`;
+}
+
+// ─── Bilan de session ────────────────────────────────────────────────────────
+
+// ─── DXY correlation alert ────────────────────────────────────────────────────
+
+/**
+ * @param {'strong'|'weak'} direction
+ * @param {number} movePct
+ * @param {Array<{instrument:string, direction:string, reason:string}>} impacts
+ */
+export function formatDXYAlert(direction, movePct, impacts) {
+  const sign     = movePct >= 0 ? '+' : '';
+  const dirLabel = direction === 'strong' ? '📈 USD Fort' : '📉 USD Faible';
+  const lines    = impacts.map(i => {
+    const arrow = i.direction === 'up' ? '📈' : i.direction === 'down' ? '📉' : '⚡';
+    return `  ${arrow} <b>${i.instrument}</b> — ${i.reason}`;
+  }).join('\n');
+  return `💵 <b>DOLLAR INDEX — MOUVEMENT SIGNIFICATIF</b>\n${dirLabel} ${sign}${movePct.toFixed(2)}% | DXY en mouvement\n\nImpact attendu :\n${lines}`;
+}
+
+// ─── Trade stats ──────────────────────────────────────────────────────────────
+
+/**
+ * @param {object[]} data   - from getTradeStats()
+ * @param {string|null} eventKey
+ */
+export function formatTradeStats(data, eventKey = null) {
+  if (!data || data.length === 0) {
+    return `📊 <b>Trade Stats${eventKey ? ' : ' + eventKey.toUpperCase() : ''}</b>\n\nAucune donnée enregistrée.\nLes stats s'afficheront après la prochaine publication avec TWELVEDATA_API_KEY actif.`;
+  }
+
+  // Group by event_key
+  const byEvent = {};
+  for (const row of data) {
+    if (!byEvent[row.event_key]) byEvent[row.event_key] = { name: row.event_name, rows: [] };
+    byEvent[row.event_key].rows.push(row);
+  }
+
+  const sections = Object.values(byEvent).map(ev => {
+    const instLines = ev.rows
+      .map(r => `  ${r.instrument}: avg <b>${r.avg_amp_5min ?? '—'}</b> pips (${r.count} evt)`)
+      .join('\n');
+    return `📊 <b>${ev.name}</b>\n${instLines}`;
+  });
+
+  return sections.join('\n\n');
+}
+
+// ─── Pattern recognition ──────────────────────────────────────────────────────
+
+/**
+ * @param {object[]} data       - from getPatternStats()
+ * @param {string|null} instrument
+ */
+export function formatPatternStats(data, instrument = null) {
+  const title = instrument
+    ? `🔍 <b>PATTERNS — ${instrument} (6 mois)</b>`
+    : `🔍 <b>PATTERNS SUR 6 MOIS</b>`;
+
+  if (!data || data.length === 0) {
+    return `${title}\n\nAucune donnée disponible.\nLes patterns s'afficheront après 5 publications enregistrées.`;
+  }
+
+  const enoughData = data.filter(r => r.has_enough_data);
+  if (enoughData.length === 0) {
+    const total = data.reduce((s, r) => s + r.count, 0);
+    return `${title}\n\nPas assez de données (${total} événement${total > 1 ? 's' : ''} enregistré${total > 1 ? 's' : ''}).\nLes stats s'afficheront après 5 publications.`;
+  }
+
+  let lines;
+  if (instrument) {
+    lines = enoughData.map(r =>
+      `${r.event_name} → avg <b>${r.avg_amp_5min}</b> pips (<b>${r.beat_pct}%</b> haussier)`
+    ).join('\n');
+  } else {
+    // Group by event, show top instruments per event
+    const byEvent = {};
+    for (const r of enoughData) {
+      if (!byEvent[r.event_key]) byEvent[r.event_key] = { name: r.event_name, rows: [] };
+      byEvent[r.event_key].rows.push(r);
+    }
+    lines = Object.values(byEvent).map(ev => {
+      const instParts = ev.rows
+        .map(r => `${r.instrument} avg ${r.avg_amp_5min} pips (${r.beat_pct}% haussier)`)
+        .join(' | ');
+      return `📊 <b>${ev.name}</b> : ${instParts}`;
+    }).join('\n');
+  }
+
+  const totalEvents = enoughData.reduce((s, r) => s + r.count, 0);
+  return `${title}\n\n${lines}\n\n<i>Basé sur ${totalEvents} événement${totalEvents > 1 ? 's' : ''} enregistré${totalEvents > 1 ? 's' : ''}</i>`;
 }
 
 // ─── Bilan de session ────────────────────────────────────────────────────────

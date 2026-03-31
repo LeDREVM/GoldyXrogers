@@ -1,4 +1,6 @@
 import { getHistory, getDirectionalProb, normalizeEventKey } from './db.js';
+import { config } from './config.js';
+import db from './db.js';
 
 /**
  * Formate l'historique d'un indicateur pour Telegram
@@ -6,7 +8,7 @@ import { getHistory, getDirectionalProb, normalizeEventKey } from './db.js';
  * @returns {string}
  */
 export function formatHistory(query) {
-  const rows = getHistory(query, 6);
+  const rows = getHistory(query, config.db.historyLimit);
   if (rows.length === 0) {
     return `📊 <b>Historique : ${query}</b>\n\nAucune donnée enregistrée pour l'instant.\nLes résultats seront stockés dès la prochaine publication.`;
   }
@@ -114,4 +116,58 @@ export function formatCorrelationAlert(event) {
   const lines = impacts.map(i => `${i.instrument}: ${i.direction}`).join(' | ');
 
   return `🔗 <b>CORRÉLATION EN CHAÎNE</b>\n${event.impactIcon} ${event.currency} ${event.name}${surprise}\n${lines}`;
+}
+
+// ─── Trade stats ──────────────────────────────────────────────────────────────
+
+/**
+ * Retourne les amplitudes moyennes par événement/instrument
+ * @param {string|null} eventKey - filtrer sur un événement précis (null = tous)
+ * @param {number} limit         - nb max de lignes retournées
+ */
+export function getTradeStats(eventKey = null, limit = 10) {
+  const sql = `
+    SELECT
+      event_key,
+      MAX(event_name)  AS event_name,
+      instrument,
+      COUNT(*)         AS count,
+      ROUND(AVG(amplitude_5min),  1) AS avg_amp_5min,
+      ROUND(AVG(amplitude_15min), 1) AS avg_amp_15min,
+      ROUND(SUM(CASE WHEN direction = 'beat' THEN 1.0 ELSE 0 END) / COUNT(*) * 100) AS beat_pct
+    FROM trade_stats
+    WHERE (? IS NULL OR event_key = ?)
+      AND amplitude_5min IS NOT NULL
+    GROUP BY event_key, instrument
+    ORDER BY avg_amp_5min DESC
+    LIMIT ?
+  `;
+  return db.prepare(sql).all(eventKey, eventKey, limit);
+}
+
+/**
+ * Retourne les patterns historiques sur N mois
+ * @param {string|null} instrument - filtrer sur un instrument (null = tous)
+ * @param {number} months
+ */
+export function getPatternStats(instrument = null, months = config.db.tradeStatsMonths) {
+  const modifier = `-${months} months`;
+  const sql = `
+    SELECT
+      event_key,
+      MAX(event_name)  AS event_name,
+      instrument,
+      COUNT(*)         AS count,
+      ROUND(AVG(amplitude_5min),  1) AS avg_amp_5min,
+      ROUND(AVG(amplitude_15min), 1) AS avg_amp_15min,
+      ROUND(SUM(CASE WHEN direction = 'beat' THEN 1.0 ELSE 0 END) / COUNT(*) * 100) AS beat_pct
+    FROM trade_stats
+    WHERE created_at >= datetime('now', ?)
+      AND (? IS NULL OR instrument = ?)
+      AND amplitude_5min IS NOT NULL
+    GROUP BY event_key, instrument
+    ORDER BY avg_amp_5min DESC
+  `;
+  const rows = db.prepare(sql).all(modifier, instrument, instrument);
+  return rows.map(r => ({ ...r, has_enough_data: r.count >= config.db.minDataPoints }));
 }

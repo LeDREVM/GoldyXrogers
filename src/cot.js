@@ -1,12 +1,13 @@
 import axios from 'axios';
 import { createRequire } from 'module';
+import { config } from './config.js';
 const require = createRequire(import.meta.url);
 const { load } = require('cheerio');
 
 // CFTC publie les données COT chaque vendredi après 15h30 EST
 // Source : https://www.cftc.gov/dea/options/deacot.htm (futures only)
-const COT_URL = 'https://www.cftc.gov/dea/options/financial_lof.htm';
-const COT_COMMODITY_URL = 'https://www.cftc.gov/dea/options/other_lof.htm';
+const COT_URL = config.urls.cotFinancial;
+const COT_COMMODITY_URL = config.urls.cotCommodity;
 
 // Contrats d'intérêt pour nos instruments
 const CONTRACTS_OF_INTEREST = {

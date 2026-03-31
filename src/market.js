@@ -1,7 +1,8 @@
 import { getCandles } from './price.js';
+import { config } from './config.js';
 
 // Instruments à analyser post-annonce
-const INSTRUMENTS = ['XAUUSD', 'USDJPY', 'US30', 'XBRUSD'];
+const INSTRUMENTS = config.market.instruments;
 
 // ─── Détection de patterns bougie ─────────────────────────────────────────────
 
@@ -22,14 +23,14 @@ export function detectCandlePattern(candles) {
   if (range === 0) return null;
 
   // Marubozu haussier — corps >= 90% du range, sans mèches significatives
-  if (c.close > c.open && body / range >= 0.9) return '🟢 Marubozu haussier';
+  if (c.close > c.open && body / range >= config.market.marubozuThreshold) return '🟢 Marubozu haussier';
   // Marubozu baissier
-  if (c.close < c.open && body / range >= 0.9) return '🔴 Marubozu baissier';
+  if (c.close < c.open && body / range >= config.market.marubozuThreshold) return '🔴 Marubozu baissier';
 
   // Pin Bar haussier — longue mèche basse (>= 60% du range), petit corps en haut
-  if (lowerWick / range >= 0.6 && body / range <= 0.25) return '🟢 Pin Bar haussier';
+  if (lowerWick / range >= config.market.pinBarWickThreshold && body / range <= config.market.pinBarBodyMax) return '🟢 Pin Bar haussier';
   // Pin Bar baissier — longue mèche haute
-  if (upperWick / range >= 0.6 && body / range <= 0.25) return '🔴 Pin Bar baissier';
+  if (upperWick / range >= config.market.pinBarWickThreshold && body / range <= config.market.pinBarBodyMax) return '🔴 Pin Bar baissier';
 
   // Engulfing haussier — bougie verte qui englobe le corps rouge précédent
   if (c.close > c.open && prev.close < prev.open &&
@@ -78,7 +79,7 @@ export function detectImbalance(candles) {
   const gapUp   = c2.low - c1.high;   // gap haussier
   const gapDown = c1.low - c2.high;   // gap baissier
 
-  const minGap = c1.close * 0.0005; // 0.05% du prix minimum pour être significatif
+  const minGap = c1.close * config.market.imbalanceMinPct;
 
   if (gapUp > minGap)   return { type: 'haussier', gap: gapUp, level: (c2.low + c1.high) / 2 };
   if (gapDown > minGap) return { type: 'baissier', gap: gapDown, level: (c1.low + c2.high) / 2 };
@@ -92,8 +93,8 @@ export function detectImbalance(candles) {
  * @returns {{type: string, level: number, breakPct: number}|null}
  */
 export function detectStructureBreak(candles, currentPrice) {
-  if (candles.length < 4) return null;
-  const recent = candles.slice(-4);
+  if (candles.length < config.market.structureLookback) return null;
+  const recent = candles.slice(-config.market.structureLookback);
   const swingHigh = Math.max(...recent.map(c => c.high));
   const swingLow  = Math.min(...recent.map(c => c.low));
 

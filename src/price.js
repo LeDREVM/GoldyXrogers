@@ -1,15 +1,10 @@
 import axios from 'axios';
+import { config } from './config.js';
 
-const BASE_URL = 'https://api.twelvedata.com';
+const BASE_URL = config.urls.twelveDataBase;
 
 // Mapping instruments → symboles Twelve Data
-const SYMBOL_MAP = {
-  XAUUSD: 'XAU/USD',
-  USDJPY: 'USD/JPY',
-  US30:   'DJI',
-  XBRUSD: 'XBR/USD',
-  DXY:    'DXY',
-};
+const SYMBOL_MAP = config.instruments.symbolMap;
 
 let apiKey = null;
 

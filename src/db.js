@@ -2,6 +2,7 @@ import { createRequire } from 'module';
 import { existsSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { fileURLToPath } from 'url';
+import { config } from './config.js';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const require = createRequire(import.meta.url);
@@ -22,6 +23,25 @@ db.pragma('synchronous = NORMAL');
 // ─── Création des tables ─────────────────────────────────────────────────────
 
 db.exec(`
+  CREATE TABLE IF NOT EXISTS trade_stats (
+    id                INTEGER PRIMARY KEY AUTOINCREMENT,
+    event_key         TEXT NOT NULL,
+    event_name        TEXT NOT NULL,
+    event_date        TEXT NOT NULL,
+    direction         TEXT NOT NULL CHECK(direction IN ('beat','miss','inline')),
+    instrument        TEXT NOT NULL,
+    price_before      REAL,
+    price_after_5min  REAL,
+    price_after_15min REAL,
+    amplitude_5min    REAL,
+    amplitude_15min   REAL,
+    created_at        TEXT DEFAULT (datetime('now'))
+  );
+
+  CREATE INDEX IF NOT EXISTS idx_ts_event_key  ON trade_stats(event_key);
+  CREATE INDEX IF NOT EXISTS idx_ts_instrument ON trade_stats(instrument);
+  CREATE INDEX IF NOT EXISTS idx_ts_date       ON trade_stats(event_date);
+
   CREATE TABLE IF NOT EXISTS event_results (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
     event_key   TEXT NOT NULL,          -- ex: "nfp_usd", "cpi_usd"
@@ -151,7 +171,7 @@ export function getState(key, defaultValue = null) {
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
-function computeBeat(actual, forecast) {
+export function computeBeat(actual, forecast) {
   if (!actual || !forecast) return null;
   const a = parseFloat(actual);
   const f = parseFloat(forecast);
@@ -159,6 +179,61 @@ function computeBeat(actual, forecast) {
   if (a > f) return 1;
   if (a < f) return 0;
   return null;
+}
+
+// ─── Fonctions trade stats ────────────────────────────────────────────────────
+
+const insertTradeStatStmt = db.prepare(`
+  INSERT INTO trade_stats (event_key, event_name, event_date, direction, instrument, price_before)
+  VALUES (?, ?, ?, ?, ?, ?)
+`);
+
+/**
+ * Enregistre les prix avant l'événement pour chaque instrument
+ * @param {object} event
+ * @param {object} prices - { XAUUSD: 2345.5, USDJPY: 150.2, ... }
+ */
+export function saveTradeStatsBefore(event, prices) {
+  const key = normalizeEventKey(event.name, event.currency);
+  const direction = computeBeat(event.actual, event.forecast) === 1 ? 'beat'
+                  : computeBeat(event.actual, event.forecast) === 0 ? 'miss'
+                  : 'inline';
+  const dateStr = event.date instanceof Date ? event.date.toISOString() : event.date;
+  for (const [instrument, price] of Object.entries(prices)) {
+    if (price != null) insertTradeStatStmt.run(key, event.name, dateStr, direction, instrument, price);
+  }
+}
+
+/**
+ * Met à jour price_after_5min et amplitude_5min
+ */
+export function updateTradeStatsAfter5(eventKey, eventDate, prices) {
+  const stmt = db.prepare(`
+    UPDATE trade_stats
+    SET price_after_5min = ?,
+        amplitude_5min   = CASE WHEN price_before IS NOT NULL THEN ABS(? - price_before) / ? ELSE NULL END
+    WHERE event_key = ? AND event_date = ? AND instrument = ?
+  `);
+  for (const [instrument, price] of Object.entries(prices)) {
+    const pipSize = config.market.pipSizes[instrument] || 0.01;
+    if (price != null) stmt.run(price, price, pipSize, eventKey, eventDate, instrument);
+  }
+}
+
+/**
+ * Met à jour price_after_15min et amplitude_15min
+ */
+export function updateTradeStatsAfter15(eventKey, eventDate, prices) {
+  const stmt = db.prepare(`
+    UPDATE trade_stats
+    SET price_after_15min = ?,
+        amplitude_15min   = CASE WHEN price_before IS NOT NULL THEN ABS(? - price_before) / ? ELSE NULL END
+    WHERE event_key = ? AND event_date = ? AND instrument = ?
+  `);
+  for (const [instrument, price] of Object.entries(prices)) {
+    const pipSize = config.market.pipSizes[instrument] || 0.01;
+    if (price != null) stmt.run(price, price, pipSize, eventKey, eventDate, instrument);
+  }
 }
 
 export default db;

@@ -1,10 +1,11 @@
 import axios from 'axios';
 import { createRequire } from 'module';
+import { config } from './config.js';
 const require = createRequire(import.meta.url);
 const { load } = require('cheerio');
 
 // Myfxbook Outlook : sentiment retail public
-const MYFXBOOK_URL = 'https://www.myfxbook.com/community/outlook';
+const MYFXBOOK_URL = config.urls.myfxbook;
 
 // Mapping Myfxbook symbol → nos instruments
 const SYMBOL_MAP = {

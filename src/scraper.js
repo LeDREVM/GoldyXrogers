@@ -1,15 +1,16 @@
 import { filterRelevantEvents } from './filters.js';
+import { config } from './config.js';
 
 let cachedEvents = [];
 let lastFetchTime = null;
-const MIN_FETCH_INTERVAL_MS = 30 * 1000;
+const MIN_FETCH_INTERVAL_MS = config.scraper.minFetchIntervalMs;
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
 }
 
-async function withRetry(fn, maxRetries = 4) {
-  let delay = 2000;
+async function withRetry(fn, maxRetries = config.scraper.retryMaxAttempts) {
+  let delay = config.scraper.retryInitialDelayMs;
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
     try { return await fn(); }
     catch (err) {
