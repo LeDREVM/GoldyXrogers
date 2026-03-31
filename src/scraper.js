@@ -63,7 +63,11 @@ export async function fetchEvents() {
       currencies: [Currency.USD, Currency.JPY],
     });
 
-    const filtered = filterRelevantEvents(normalizeEvents(rawEvents));
+    const normalized = normalizeEvents(rawEvents);
+    if (normalized.length > 0) {
+      console.log('[scraper] Premier événement brut:', JSON.stringify({ name: normalized[0].name, date: normalized[0].date, utcH: normalized[0].date?.getUTCHours() }));
+    }
+    const filtered = filterRelevantEvents(normalized);
     cachedEvents = filtered;
     lastFetchTime = Date.now();
     console.log(`[scraper] ${filtered.length} événements NY (${rawEvents.length} bruts)`);
