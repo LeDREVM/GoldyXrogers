@@ -1,5 +1,11 @@
+import axios from 'axios';
+import * as cheerio from 'cheerio';
+import { DateTime } from 'luxon';
 import { filterRelevantEvents } from './filters.js';
 import { config } from './config.js';
+
+const FF_THISWEEK_URL = 'https://nfs.faireconomy.media/ff_calendar_thisweek.xml';
+const FF_NEXTWEEK_URL = 'https://nfs.faireconomy.media/ff_calendar_nextweek.xml';
 
 let cachedEvents = [];
 let lastFetchTime = null;
@@ -22,26 +28,83 @@ async function withRetry(fn, maxRetries = config.scraper.retryMaxAttempts) {
   }
 }
 
-function parseEventDate(timeStr, timestampDay) {
-  if (!timeStr || timeStr === 'All Day' || !timestampDay) return new Date(timestampDay * 1000);
-  const match = timeStr.match(/(\d+):(\d+)/);
-  if (!match) return new Date(timestampDay * 1000);
-  const d = new Date(timestampDay * 1000);
-  d.setUTCHours(parseInt(match[1], 10), parseInt(match[2], 10), 0, 0);
-  return d;
+const IMPACT_MAP = {
+  'High':    3,
+  'Medium':  2,
+  'Low':     1,
+  'Holiday': 0,
+};
+
+/**
+ * Parse a ForexFactory date+time into a UTC Date.
+ * FF date format: "MM-DD-YYYY" — FF times are US Eastern (America/New_York).
+ */
+function parseFFDate(dateStr, timeStr) {
+  if (!dateStr) return null;
+
+  const [month, day, year] = dateStr.split('-');
+  if (!month || !day || !year) return null;
+
+  const base = { year: parseInt(year, 10), month: parseInt(month, 10), day: parseInt(day, 10) };
+
+  if (!timeStr || timeStr === 'All Day' || timeStr === 'Tentative') {
+    return DateTime.fromObject({ ...base, hour: 0, minute: 0 }, { zone: 'America/New_York' }).toJSDate();
+  }
+
+  const match = timeStr.match(/^(\d{1,2}):(\d{2})(am|pm)$/i);
+  if (!match) {
+    return DateTime.fromObject({ ...base, hour: 0, minute: 0 }, { zone: 'America/New_York' }).toJSDate();
+  }
+
+  let hour = parseInt(match[1], 10);
+  const minute = parseInt(match[2], 10);
+  const ampm = match[3].toLowerCase();
+
+  if (ampm === 'am' && hour === 12) hour = 0;
+  if (ampm === 'pm' && hour !== 12) hour += 12;
+
+  return DateTime.fromObject({ ...base, hour, minute }, { zone: 'America/New_York' }).toJSDate();
 }
 
-function normalizeEvents(rawEvents) {
-  return (rawEvents || []).map(ev => ({
-    id:         String(ev.id || `ev_${ev.timestampDay}_${ev.time}`),
-    date:       parseEventDate(ev.time, ev.timestampDay),
-    currency:   (ev.currency || '').trim().toUpperCase(),
-    name:       (ev.name || '').trim(),
-    importance: ev.importance || 0,
-    forecast:   ev.forecast || null,
-    previous:   ev.previous || null,
-    actual:     ev.actual || null,
-  }));
+async function fetchFFXml(url) {
+  const response = await axios.get(url, {
+    timeout: 10000,
+    headers: { 'User-Agent': 'Mozilla/5.0' },
+    responseType: 'text',
+  });
+  return response.data;
+}
+
+function parseXmlEvents(xml) {
+  const $ = cheerio.load(xml, { xmlMode: true });
+  const events = [];
+
+  $('event').each((_, el) => {
+    const title    = $(el).find('title').text().trim();
+    const country  = $(el).find('country').text().trim().toUpperCase();
+    const dateStr  = $(el).find('date').text().trim();
+    const timeStr  = $(el).find('time').text().trim();
+    const impact   = $(el).find('impact').text().trim();
+    const forecast = $(el).find('forecast').text().trim() || null;
+    const previous = $(el).find('previous').text().trim() || null;
+    const actual   = $(el).find('actual').text().trim() || null;
+
+    const date = parseFFDate(dateStr, timeStr);
+    if (!date) return;
+
+    events.push({
+      id:         `ff_${country}_${dateStr}_${timeStr}_${title}`.replace(/\s+/g, '_'),
+      date,
+      currency:   country,
+      name:       title,
+      importance: IMPACT_MAP[impact] ?? 0,
+      forecast,
+      previous,
+      actual,
+    });
+  });
+
+  return events;
 }
 
 /**
@@ -52,25 +115,20 @@ export async function fetchEvents() {
   if (lastFetchTime && now - lastFetchTime < MIN_FETCH_INTERVAL_MS) return cachedEvents;
 
   return withRetry(async () => {
-    const { fetchEconomicEvents, Importance, CalendarType, Language, TimeZone, Currency } =
-      await import('investing-economic-calendar');
+    const xml = await fetchFFXml(FF_THISWEEK_URL);
+    const rawEvents = parseXmlEvents(xml);
 
-    const rawEvents = await fetchEconomicEvents({
-      importance: [Importance.HIGH, Importance.MEDIUM, Importance.LOW],
-      calType: CalendarType.DAILY,
-      lang: Language.ENGLISH,
-      timeZone: TimeZone.UTC,
-      currencies: [Currency.USD, Currency.JPY],
+    // Filter to today (ET date)
+    const todayET = DateTime.now().setZone('America/New_York').startOf('day');
+    const todayEvents = rawEvents.filter(ev => {
+      const evDay = DateTime.fromJSDate(ev.date).setZone('America/New_York').startOf('day');
+      return evDay.equals(todayET);
     });
 
-    const normalized = normalizeEvents(rawEvents);
-    if (normalized.length > 0) {
-      console.log('[scraper] Premier événement brut:', JSON.stringify({ name: normalized[0].name, date: normalized[0].date, utcH: normalized[0].date?.getUTCHours() }));
-    }
-    const filtered = filterRelevantEvents(normalized);
+    const filtered = filterRelevantEvents(todayEvents);
     cachedEvents = filtered;
     lastFetchTime = Date.now();
-    console.log(`[scraper] ${filtered.length} événements NY (${rawEvents.length} bruts)`);
+    console.log(`[scraper] ${filtered.length} événements NY (${todayEvents.length} du jour, ${rawEvents.length} semaine) — ForexFactory XML`);
     return filtered;
   });
 }
@@ -82,20 +140,27 @@ export async function fetchEvents() {
  */
 export async function fetchEventsForDate(date = null, period = 'day') {
   return withRetry(async () => {
-    const { fetchEconomicEvents, Importance, CalendarType, Language, TimeZone, Currency } =
-      await import('investing-economic-calendar');
+    const urls = period === 'week'
+      ? [FF_THISWEEK_URL, FF_NEXTWEEK_URL]
+      : [FF_THISWEEK_URL];
 
-    const calType = period === 'week' ? CalendarType.WEEKLY : CalendarType.DAILY;
+    const allEvents = [];
+    for (const url of urls) {
+      const xml = await fetchFFXml(url);
+      allEvents.push(...parseXmlEvents(xml));
+    }
 
-    const rawEvents = await fetchEconomicEvents({
-      importance: [Importance.HIGH, Importance.MEDIUM, Importance.LOW],
-      calType,
-      lang: Language.ENGLISH,
-      timeZone: TimeZone.UTC,
-      currencies: [Currency.USD, Currency.JPY],
-    });
+    if (period === 'day') {
+      const target = DateTime.fromJSDate(date || new Date()).setZone('America/New_York').startOf('day');
+      return filterRelevantEvents(
+        allEvents.filter(ev => {
+          const evDay = DateTime.fromJSDate(ev.date).setZone('America/New_York').startOf('day');
+          return evDay.equals(target);
+        })
+      );
+    }
 
-    return filterRelevantEvents(normalizeEvents(rawEvents));
+    return filterRelevantEvents(allEvents);
   });
 }
 
