@@ -1,11 +1,11 @@
 import TelegramBot from 'node-telegram-bot-api';
 import { getCachedEvents, fetchEventsForDate } from './scraper.js';
-import { formatMorningSummary, formatTradeStats, formatPatternStats } from './formatter.js';
+import { formatMorningSummary, formatTradeStats, formatPatternStats, formatCorrelationStats } from './formatter.js';
 import { formatHistory, getTradeStats, getPatternStats } from './stats.js';
 import { formatCOTMessage } from './cot.js';
 import { formatSentimentMessage } from './sentiment.js';
 import { formatOptionsMessage } from './options.js';
-import { setState, getState, normalizeEventKey } from './db.js';
+import { setState, getState, normalizeEventKey, getCorrelationStats } from './db.js';
 import { config } from './config.js';
 
 let bot = null;
@@ -44,7 +44,8 @@ export async function initBot(token, targetChatId) {
     '📊 <b>Statistiques</b>\n' +
     '/history [indicateur] — Historique des annonces (ex: /history NFP)\n' +
     '/best [indicateur] — Amplitudes moyennes post-annonce\n' +
-    '/patterns [instrument] — Patterns par instrument (ex: /patterns XAUUSD)\n\n' +
+    '/patterns [instrument] — Patterns par instrument (ex: /patterns XAUUSD)\n' +
+    '/correlation [indicateur] — Corrélation event→prix par instrument (ex: /correlation CPI)\n\n' +
     '🌐 <b>Marché</b>\n' +
     '/cot — Rapport COT institutionnels (CFTC)\n' +
     '/sentiment — Sentiment retail Myfxbook\n' +
@@ -152,6 +153,17 @@ export async function initBot(token, targetChatId) {
       `⚙️ <b>Filtre d'impact mis à jour</b>\nNiveau actif: <b>${level}</b>\n\nLes prochaines alertes respecteront ce filtre.`,
       { parse_mode: 'HTML' }
     );
+  });
+
+  bot.onText(/\/correlation(?:\s+(.+))?/, (msg, match) => {
+    const query = (match[1] || 'NFP').trim();
+    // Tente USD en premier, puis JPY si aucune donnée
+    const keyUSD = normalizeEventKey(query, 'USD');
+    const keyJPY = normalizeEventKey(query, 'JPY');
+    let data = getCorrelationStats(keyUSD);
+    if (data.rows.length === 0) data = getCorrelationStats(keyJPY);
+    const text = formatCorrelationStats(data, query);
+    bot.sendMessage(msg.chat.id, text, { parse_mode: 'HTML' });
   });
 
   bot.onText(/\/cot/, async (msg) => {

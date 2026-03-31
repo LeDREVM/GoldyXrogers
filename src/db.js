@@ -236,4 +236,43 @@ export function updateTradeStatsAfter15(eventKey, eventDate, prices) {
   }
 }
 
+// ─── Corrélation événement → prix ────────────────────────────────────────────
+
+/**
+ * Retourne les stats de corrélation pour un événement :
+ * amplitude moyenne + biais directionnel par instrument et par résultat (beat/miss/inline)
+ * @param {string} eventKey
+ * @returns {{ rows: object[], dirCounts: object[], eventName: string }}
+ */
+export function getCorrelationStats(eventKey) {
+  const rows = db.prepare(`
+    SELECT
+      instrument,
+      direction,
+      COUNT(*)                                                                       AS count,
+      ROUND(AVG(amplitude_5min),  1)                                                AS avg_amp_5min,
+      ROUND(AVG(amplitude_15min), 1)                                                AS avg_amp_15min,
+      SUM(CASE WHEN price_after_5min > price_before THEN 1 ELSE 0 END)             AS up_count,
+      SUM(CASE WHEN price_after_5min < price_before THEN 1 ELSE 0 END)             AS down_count,
+      MAX(event_name)                                                               AS event_name
+    FROM trade_stats
+    WHERE event_key = ?
+      AND amplitude_5min IS NOT NULL
+      AND price_before   IS NOT NULL
+      AND price_after_5min IS NOT NULL
+    GROUP BY instrument, direction
+    ORDER BY instrument, direction
+  `).all(eventKey);
+
+  const dirCounts = db.prepare(`
+    SELECT direction, COUNT(DISTINCT event_date) AS total
+    FROM trade_stats
+    WHERE event_key = ?
+    GROUP BY direction
+  `).all(eventKey);
+
+  const eventName = rows[0]?.event_name || eventKey;
+  return { rows, dirCounts, eventName };
+}
+
 export default db;

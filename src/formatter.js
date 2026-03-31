@@ -220,6 +220,71 @@ export function formatPatternStats(data, instrument = null) {
   return `${title}\n\n${lines}\n\n<i>Basé sur ${totalEvents} événement${totalEvents > 1 ? 's' : ''} enregistré${totalEvents > 1 ? 's' : ''}</i>`;
 }
 
+// ─── Corrélation événement → prix ────────────────────────────────────────────
+
+const DIR_LABEL = {
+  beat:   '🟢 BEAT (réel > prévision)',
+  miss:   '🔴 MISS (réel < prévision)',
+  inline: '⚪ IN-LINE (réel ≈ prévision)',
+};
+const DIR_ORDER = ['beat', 'miss', 'inline'];
+
+/**
+ * @param {{ rows: object[], dirCounts: object[], eventName: string }} data
+ * @param {string} query  - terme de recherche original (pour le titre)
+ */
+export function formatCorrelationStats({ rows, dirCounts, eventName }, query) {
+  const title = `🔗 <b>CORRÉLATION — ${query.toUpperCase()}</b>`;
+
+  if (!rows || rows.length === 0) {
+    return `${title}\n\nAucune donnée disponible.\nLes corrélations s'afficheront dès que des publications avec prix seront enregistrées (TWELVEDATA_API_KEY requis).`;
+  }
+
+  // Index dirCounts by direction
+  const totalByDir = {};
+  for (const d of dirCounts) totalByDir[d.direction] = d.total;
+
+  // Group rows by direction
+  const byDir = {};
+  for (const r of rows) {
+    (byDir[r.direction] ??= []).push(r);
+  }
+
+  const sections = DIR_ORDER
+    .filter(dir => byDir[dir])
+    .map(dir => {
+      const instRows = byDir[dir];
+      const total = totalByDir[dir] ?? instRows[0].count;
+      const label = DIR_LABEL[dir] ?? dir.toUpperCase();
+
+      const lines = instRows.map(r => {
+        const upDown = r.up_count + r.down_count;
+        let bias;
+        if (upDown === 0) {
+          bias = '⚡ Mixte';
+        } else {
+          const upPct   = Math.round(r.up_count   / upDown * 100);
+          const downPct = Math.round(r.down_count / upDown * 100);
+          if (Math.abs(upPct - downPct) <= 10) {
+            bias = `⚡ Mixte (${upPct}%↑ ${downPct}%↓)`;
+          } else if (upPct > downPct) {
+            bias = `⬆️ ${upPct}% haussier`;
+          } else {
+            bias = `⬇️ ${downPct}% baissier`;
+          }
+        }
+        const amp5  = r.avg_amp_5min  != null ? `${r.avg_amp_5min}p`  : '—';
+        const amp15 = r.avg_amp_15min != null ? `${r.avg_amp_15min}p` : '—';
+        return `  <b>${r.instrument}</b> : avg ${amp5} (15min ${amp15}) | ${bias}`;
+      }).join('\n');
+
+      return `${label} — <b>${total}</b> publi.\n${lines}`;
+    });
+
+  const grandTotal = Object.values(totalByDir).reduce((s, v) => s + v, 0);
+  return `${title}\n<i>${eventName}</i>\n\n${sections.join('\n\n')}\n\n<i>Basé sur ${grandTotal} publications enregistrées</i>`;
+}
+
 // ─── Bilan de session ────────────────────────────────────────────────────────
 
 export function formatSessionBilan(events) {
