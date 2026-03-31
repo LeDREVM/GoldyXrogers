@@ -1,7 +1,7 @@
 {
   "name": "goldyxrogers",
-  "version": "1.0.0",
-  "description": "Trading alert bot — NY session economic calendar alerts via Telegram (Guadeloupe UTC-4)",
+  "version": "2.0.0",
+  "description": "Trading alert bot — NY session scalping assistant (Guadeloupe UTC-4)",
   "type": "module",
   "main": "src/index.js",
   "scripts": {
@@ -12,7 +12,10 @@
     "node-telegram-bot-api": "^0.66.0",
     "node-cron": "^3.0.3",
     "luxon": "^3.4.4",
-    "dotenv": "^16.3.1"
+    "dotenv": "^16.3.1",
+    "better-sqlite3": "^9.4.3",
+    "axios": "^1.7.0",
+    "cheerio": "^1.0.0"
   },
   "engines": {
     "node": ">=18.0.0"

@@ -1,0 +1,16 @@
+services:
+  goldyxrogers:
+    build: .
+    container_name: goldyxrogers-bot
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data        # Persistance SQLite
+    environment:
+      - TZ=UTC
+    logging:
+      driver: "json-file"
+      options:
+        max-size: "10m"
+        max-file: "3"
