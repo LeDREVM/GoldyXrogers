@@ -3,10 +3,15 @@ import { initBot, sendAlert } from './telegram.js';
 import { fetchEvents } from './scraper.js';
 import { startScheduler } from './scheduler.js';
 import { initPrice } from './price.js';
+import { initNextcloud } from './nextcloud.js';
 
-const TOKEN          = process.env.TELEGRAM_BOT_TOKEN;
-const CHAT_ID        = process.env.TELEGRAM_CHAT_ID;
-const TWELVEDATA_KEY = process.env.TWELVEDATA_API_KEY;
+const TOKEN             = process.env.TELEGRAM_BOT_TOKEN;
+const CHAT_ID           = process.env.TELEGRAM_CHAT_ID;
+const TWELVEDATA_KEY    = process.env.TWELVEDATA_API_KEY;
+const NEXTCLOUD_URL     = process.env.NEXTCLOUD_URL;
+const NEXTCLOUD_USER    = process.env.NEXTCLOUD_USERNAME;
+const NEXTCLOUD_PASS    = process.env.NEXTCLOUD_PASSWORD;
+const NEXTCLOUD_FOLDER  = process.env.NEXTCLOUD_FOLDER || 'GoldyXrogers';
 
 async function main() {
   console.log('========================================');
@@ -22,6 +27,9 @@ async function main() {
   } else {
     console.warn('[main] TWELVEDATA_API_KEY absent — analyses marché désactivées');
   }
+
+  // 1b. Init Nextcloud (optionnel)
+  initNextcloud(NEXTCLOUD_URL, NEXTCLOUD_USER, NEXTCLOUD_PASS, NEXTCLOUD_FOLDER);
 
   // 2. Init Telegram
   initBot(TOKEN, CHAT_ID);

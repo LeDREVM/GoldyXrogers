@@ -16,6 +16,7 @@ import { analyzePostEvent } from './market.js';
 import { formatCOTMessage } from './cot.js';
 import { checkTodayExpiry } from './options.js';
 import { getState } from './db.js';
+import { syncHistoryToNextcloud, syncDailyReport, isNextcloudEnabled } from './nextcloud.js';
 
 const alertedPre15    = new Set();
 const alertedPre5     = new Set();
@@ -101,8 +102,13 @@ async function checkPostAlerts() {
       const corrMsg = formatCorrelationAlert(event);
       if (corrMsg) await sendAlert(corrMsg);
 
-      // 3. Sauvegarder en DB
+      // 3. Sauvegarder en DB + sync Nextcloud
       saveEventResult(event);
+      if (isNextcloudEnabled()) {
+        syncHistoryToNextcloud().catch(err =>
+          console.error('[scheduler] Erreur sync Nextcloud:', err.message)
+        );
+      }
 
       // 4. Analyse marché post-event (après 3 min pour laisser le prix réagir)
       if (event.importance >= 2) {
@@ -127,6 +133,16 @@ async function sendSessionBilan() {
   try {
     const events = getCachedEvents();
     await sendAlert(formatSessionBilan(events), true);
+
+    // Sync rapport journalier + historique complet vers Nextcloud
+    if (isNextcloudEnabled()) {
+      await syncDailyReport(events).catch(err =>
+        console.error('[scheduler] Erreur sync rapport Nextcloud:', err.message)
+      );
+      await syncHistoryToNextcloud().catch(err =>
+        console.error('[scheduler] Erreur sync historique Nextcloud:', err.message)
+      );
+    }
   } catch (err) {
     console.error('[scheduler] Erreur bilan:', err.message);
   }
