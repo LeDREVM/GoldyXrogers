@@ -14,12 +14,17 @@ let chatId = null;
 // État runtime (mute)
 let muteUntil = null;
 
-export function initBot(token, targetChatId) {
+export async function initBot(token, targetChatId) {
   if (!token) throw new Error('TELEGRAM_BOT_TOKEN manquant dans .env');
   if (!targetChatId) throw new Error('TELEGRAM_CHAT_ID manquant dans .env');
 
   chatId = targetChatId;
-  bot = new TelegramBot(token, { polling: true });
+
+  // Supprime tout webhook résiduel avant de démarrer le polling
+  const tempBot = new TelegramBot(token);
+  await tempBot.deleteWebhook();
+
+  bot = new TelegramBot(token, { polling: { interval: 2000, autoStart: true } });
 
   // Restaure le mute depuis DB au démarrage
   const savedMute = getState('mute_until');
@@ -30,11 +35,36 @@ export function initBot(token, targetChatId) {
 
   // ─── Commandes ──────────────────────────────────────────────────────────────
 
+  const HELP_TEXT =
+    '📋 <b>Commandes GoldyXrogers</b>\n\n' +
+    '📅 <b>Calendrier</b>\n' +
+    '/today — Résumé session NY du jour\n' +
+    '/tomorrow — Événements demain\n' +
+    '/week — Planning de la semaine\n\n' +
+    '📊 <b>Statistiques</b>\n' +
+    '/history [indicateur] — Historique des annonces (ex: /history NFP)\n' +
+    '/best [indicateur] — Amplitudes moyennes post-annonce\n' +
+    '/patterns [instrument] — Patterns par instrument (ex: /patterns XAUUSD)\n\n' +
+    '🌐 <b>Marché</b>\n' +
+    '/cot — Rapport COT institutionnels (CFTC)\n' +
+    '/sentiment — Sentiment retail Myfxbook\n' +
+    '/options — Expirations options CME\n\n' +
+    '🔧 <b>Contrôle</b>\n' +
+    '/mute [min] — Suspendre alertes (défaut 30 min)\n' +
+    '/unmute — Réactiver alertes\n' +
+    '/impact [level] — Filtrer par impact: high | medium | low | all\n' +
+    '/status — État du bot\n' +
+    '/help — Afficher ce message';
+
   bot.onText(/\/start/, (msg) => {
     bot.sendMessage(msg.chat.id,
-      '✅ <b>GoldyXrogers Bot actif</b>\n\nSession NY | Guadeloupe (UTC-4)\nUS30 · USDJPY · XBRUSD · XAUUSD\n\nCommandes:\n/today — Résumé session NY\n/tomorrow — Événements demain\n/week — Planning de la semaine\n/history [indicateur] — Ex: /history NFP\n/best [indicateur] — Amplitudes moyennes post-annonce\n/patterns [instrument] — Ex: /patterns XAUUSD\n/mute [min] — Suspendre alertes (ex: /mute 30)\n/unmute — Réactiver alertes\n/impact [level] — Filtrer impact (high/medium/low/all)\n/cot — Rapport COT institutionnels\n/sentiment — Sentiment retail Myfxbook\n/options — Expirations options CME\n/status — État du bot',
+      '✅ <b>GoldyXrogers Bot actif</b>\n\nSession NY | Guadeloupe (UTC-4)\nUS30 · USDJPY · XBRUSD · XAUUSD\n\n' + HELP_TEXT,
       { parse_mode: 'HTML' }
     );
+  });
+
+  bot.onText(/\/help/, (msg) => {
+    bot.sendMessage(msg.chat.id, HELP_TEXT, { parse_mode: 'HTML' });
   });
 
   bot.onText(/\/today/, (msg) => {
@@ -154,11 +184,28 @@ export function initBot(token, targetChatId) {
   });
 
   bot.on('polling_error', (err) => {
-    console.error('[telegram] Polling error:', err.message);
+    // 409 = autre instance active : on attend et on retente
+    if (err.code === 'ETELEGRAM' && err.message.includes('409')) {
+      console.warn('[telegram] 409 Conflict détecté — autre instance active. Nouvelle tentative dans 5s...');
+      setTimeout(() => bot.startPolling(), 5000);
+    } else {
+      console.error('[telegram] Polling error:', err.message);
+    }
   });
 
   console.log('[telegram] Bot initialisé');
   return bot;
+}
+
+/**
+ * Arrête proprement le polling (appeler avant process.exit)
+ */
+export async function stopBot() {
+  if (bot) {
+    await bot.stopPolling();
+    bot = null;
+    console.log('[telegram] Polling arrêté');
+  }
 }
 
 /**
